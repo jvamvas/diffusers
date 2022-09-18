@@ -94,6 +94,7 @@ class StableDiffusionPipeline(DiffusionPipeline):
     def __call__(
         self,
         prompt: Union[str, List[str]],
+        prompt2: Union[str, List[str]] = None,
         height: Optional[int] = 512,
         width: Optional[int] = 512,
         num_inference_steps: Optional[int] = 50,
@@ -111,6 +112,8 @@ class StableDiffusionPipeline(DiffusionPipeline):
         Args:
             prompt (`str` or `List[str]`):
                 The prompt or prompts to guide the image generation.
+            prompt2 (`str` or `List[str]`):
+                An optional second prompt. If provided, the two prompts will be ensembled
             height (`int`, *optional*, defaults to 512):
                 The height in pixels of the generated image.
             width (`int`, *optional*, defaults to 512):
@@ -181,6 +184,16 @@ class StableDiffusionPipeline(DiffusionPipeline):
         )
         text_embeddings = self.text_encoder(text_input.input_ids.to(self.device))[0]
 
+        if prompt2 is not None:
+            text_input2 = self.tokenizer(
+                prompt2,
+                padding="max_length",
+                max_length=self.tokenizer.model_max_length,
+                truncation=True,
+                return_tensors="pt",
+            )
+            text_embeddings2 = self.text_encoder(text_input2.input_ids.to(self.device))[0]
+
         # here `guidance_scale` is defined analog to the guidance weight `w` of equation (2)
         # of the Imagen paper: https://arxiv.org/pdf/2205.11487.pdf . `guidance_scale = 1`
         # corresponds to doing no classifier free guidance.
@@ -197,6 +210,8 @@ class StableDiffusionPipeline(DiffusionPipeline):
             # Here we concatenate the unconditional and text embeddings into a single batch
             # to avoid doing two forward passes
             text_embeddings = torch.cat([uncond_embeddings, text_embeddings])
+            if prompt2 is not None:
+                text_embeddings2 = torch.cat([uncond_embeddings, text_embeddings2])
 
         # get the initial random noise unless the user supplied it
 
@@ -247,6 +262,9 @@ class StableDiffusionPipeline(DiffusionPipeline):
 
             # predict the noise residual
             noise_pred = self.unet(latent_model_input, t, encoder_hidden_states=text_embeddings).sample
+            if prompt2 is not None:
+                noise_pred2 = self.unet(latent_model_input, t, encoder_hidden_states=text_embeddings2).sample
+                noise_pred = (noise_pred + noise_pred2) / 2
 
             # perform guidance
             if do_classifier_free_guidance:
